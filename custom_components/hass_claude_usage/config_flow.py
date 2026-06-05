@@ -28,6 +28,8 @@ from .const import (
     CONF_ACCOUNT_EMAIL,
     CONF_ACCOUNT_ID,
     CONF_ACCOUNT_NAME,
+    CONF_CODEX_ACCESS_TOKEN,
+    CONF_CODEX_ACCOUNT_ID,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_LEVEL,
@@ -325,6 +327,8 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
         )
+        codex_access_token = self.config_entry.options.get(CONF_CODEX_ACCESS_TOKEN, "")
+        codex_account_id = self.config_entry.options.get(CONF_CODEX_ACCOUNT_ID, "")
 
         return self.async_show_form(
             step_id="init",
@@ -333,6 +337,11 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
                     vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(
                         int, vol.Range(min=60, max=3600)
                     ),
+                    vol.Optional(
+                        CONF_CODEX_ACCESS_TOKEN,
+                        default=codex_access_token,
+                    ): str,
+                    vol.Optional(CONF_CODEX_ACCOUNT_ID, default=codex_account_id): str,
                 }
             ),
         )

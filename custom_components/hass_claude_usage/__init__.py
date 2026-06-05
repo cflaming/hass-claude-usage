@@ -22,6 +22,7 @@ from .const import (
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_UPDATE_INTERVAL,
+    CODEX_USAGE_API_URL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     OAUTH_CLIENT_ID,
@@ -211,7 +212,41 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Error fetching usage data: {err}") from err
 
-        return _parse_usage(raw)
+        data = _parse_usage(raw)
+        data.update(await self._async_fetch_codex_usage())
+        return data
+
+    async def _async_fetch_codex_usage(self) -> dict[str, Any]:
+        """Fetch Codex usage data when a Codex token is configured."""
+        access_token = self.config_entry.options.get(CONF_CODEX_ACCESS_TOKEN)
+        if not access_token:
+            return {}
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": "hass-claude-usage",
+        }
+        account_id = self.config_entry.options.get(CONF_CODEX_ACCOUNT_ID)
+        if account_id:
+            headers["ChatGPT-Account-Id"] = account_id
+
+        try:
+            session = aiohttp_client.async_get_clientsession(self.hass)
+            resp = await session.get(
+                CODEX_USAGE_API_URL,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            )
+            if resp.status == 401:
+                _LOGGER.warning("Codex usage authentication failed")
+                return {}
+            resp.raise_for_status()
+            raw = await resp.json()
+        except aiohttp.ClientError:
+            _LOGGER.exception("Error fetching Codex usage data")
+            return {}
+
+        return _parse_codex_usage(raw)
 
     async def _ensure_valid_token(self) -> None:
         """Refresh the access token if expired."""
@@ -318,3 +353,90 @@ def _parse_usage(raw: dict[str, Any]) -> dict[str, Any]:
         data["extra_usage_enabled"] = False
 
     return data
+
+
+def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize one Codex usage window."""
+    if not window:
+        return None
+
+    used_percent = window.get("used_percent", 0)
+    try:
+        used_percent = float(used_percent)
+    except (TypeError, ValueError):
+        used_percent = 0
+
+    window_seconds = window.get("limit_window_seconds", 0)
+    window_minutes = window.get("window_minutes")
+    if window_minutes is None:
+        try:
+            window_seconds = float(window_seconds)
+            window_minutes = int((window_seconds + 59) // 60) if window_seconds > 0 else None
+        except (TypeError, ValueError):
+            window_minutes = None
+
+    return {
+        "used_percent": used_percent,
+        "remaining_percent": max(0, 100 - used_percent),
+        "window_minutes": window_minutes,
+        "reset_at": window.get("reset_at"),
+        "reset_after_seconds": window.get("reset_after_seconds"),
+    }
+
+
+def _first_some(*values: Any) -> Any:
+    """Return the first non-null value."""
+    return next((value for value in values if value is not None), None)
+
+
+def _format_codex_reset_time(epoch_seconds: Any, include_date: bool) -> str | None:
+    """Format Codex reset time like the MQTT bridge sensors."""
+    if not epoch_seconds:
+        return None
+
+    try:
+        reset = datetime.fromtimestamp(float(epoch_seconds))
+    except (TypeError, ValueError, OSError):
+        return None
+
+    if include_date:
+        return reset.strftime("%d/%m - %H:%M")
+    return reset.strftime("%H:%M")
+
+
+def _normalize_codex_limit_status(status: Any) -> str:
+    """Normalize the Codex rate limit status."""
+    if not status or str(status).lower() == "unknown":
+        return "OK"
+    return str(status)
+
+
+def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
+    """Parse raw Codex API response into flat sensor data dict."""
+    rate_limit = raw.get("rate_limit") or raw.get("rateLimits") or {}
+    primary = _normalize_codex_window(
+        _first_some(rate_limit.get("primary_window"), rate_limit.get("primary"))
+    )
+    secondary = _normalize_codex_window(
+        _first_some(rate_limit.get("secondary_window"), rate_limit.get("secondary"))
+    )
+    credits = raw.get("credits") or {}
+    rate_limit_reached_type = raw.get("rate_limit_reached_type")
+    if isinstance(rate_limit_reached_type, dict):
+        rate_limit_reached_type = rate_limit_reached_type.get("kind")
+
+    return {
+        "plan": raw.get("plan_type") or raw.get("planType"),
+        "primary_used_percent": primary.get("used_percent") if primary else None,
+        "primary_remaining_percent": primary.get("remaining_percent") if primary else None,
+        "primary_reset_time": _format_codex_reset_time(
+            primary.get("reset_at") if primary else None, False
+        ),
+        "secondary_used_percent": secondary.get("used_percent") if secondary else None,
+        "secondary_remaining_percent": secondary.get("remaining_percent") if secondary else None,
+        "secondary_reset_time": _format_codex_reset_time(
+            secondary.get("reset_at") if secondary else None, True
+        ),
+        "credits_balance": credits.get("balance"),
+        "rate_limit_reached_type": _normalize_codex_limit_status(rate_limit_reached_type),
+    }

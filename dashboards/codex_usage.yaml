@@ -1,0 +1,50 @@
+views:
+  - title: Codex
+    cards:
+      - type: history-graph
+        entities:
+          - entity: sensor.claude_usage_codex_5h_used
+            name: 5h used
+          - entity: sensor.claude_usage_codex_5h_remaining
+            name: 5h remaining
+          - entity: sensor.claude_usage_codex_weekly_used
+            name: Weekly used
+          - entity: sensor.claude_usage_codex_weekly_remaining
+            name: Weekly remaining
+        title: Codex Usage
+        hours_to_show: 24
+
+      - type: entities
+        title: Codex Windows
+        entities:
+          - entity: sensor.claude_usage_codex_5h_used
+            secondary_info: last-updated
+            name: 5h used
+          - entity: sensor.claude_usage_codex_5h_remaining
+            secondary_info: last-updated
+            name: 5h remaining
+          - entity: sensor.claude_usage_codex_5h_reset
+            secondary_info: state
+            name: 5h reset
+          - entity: sensor.claude_usage_codex_weekly_used
+            secondary_info: last-updated
+            name: Weekly used
+          - entity: sensor.claude_usage_codex_weekly_remaining
+            secondary_info: last-updated
+            name: Weekly remaining
+          - entity: sensor.claude_usage_codex_weekly_reset
+            secondary_info: state
+            name: Weekly reset
+
+      - type: entities
+        title: Codex Account
+        entities:
+          - entity: sensor.claude_usage_codex_plan
+            secondary_info: last-updated
+            name: Plan
+          - entity: sensor.claude_usage_codex_credits
+            secondary_info: last-updated
+            name: Credits
+          - entity: sensor.claude_usage_codex_limit_status
+            secondary_info: last-updated
+            name: Limit status

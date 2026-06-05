@@ -16,6 +16,15 @@ A custom Home Assistant integration that monitors your Claude (Anthropic) subscr
 - **Extra Usage** - Extra usage utilization (%)
 - **Extra Usage Credits** - Credits consumed this month
 - **Extra Usage Limit** - Monthly credit limit
+- **Codex 5h Used** - Current Codex 5-hour usage (%)
+- **Codex 5h Remaining** - Current Codex 5-hour remaining (%)
+- **Codex 5h Reset** - When the Codex 5-hour window resets
+- **Codex Weekly Used** - Current Codex weekly usage (%)
+- **Codex Weekly Remaining** - Current Codex weekly remaining (%)
+- **Codex Weekly Reset** - When the Codex weekly window resets
+- **Codex Credits** - Current Codex credits balance
+- **Codex Plan** - Current Codex plan
+- **Codex Limit Status** - Current Codex rate limit status
 
 ## Installation
 
@@ -45,6 +54,10 @@ The integration uses Anthropic's OAuth flow:
 ## Options
 
 - **Update interval** - How often to poll the usage API (default: 300 seconds, min: 60, max: 3600).
+- **Codex access token** - Optional OpenAI/Codex bearer token used to populate Codex sensors.
+- **ChatGPT account ID** - Optional account ID for Codex usage requests.
+
+Codex sensors are created with the integration but remain unavailable until a Codex access token is configured.
 
 ## Dashboard
 
