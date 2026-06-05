@@ -30,10 +30,11 @@
     "step": {
       "init": {
         "title": "Claude Usage Options",
-        "description": "Configure polling interval and optional Codex usage sensors. Leave the Codex access token blank to keep the current token. Note: the usage APIs have rate limits, so avoid setting this too low.",
+        "description": "Configure polling interval and optional Codex usage sensors. Leave either Codex token field blank to keep its current value. Note: the usage APIs have rate limits, so avoid setting this too low.",
         "data": {
           "update_interval": "Update interval (seconds)",
           "codex_access_token": "Codex access token",
+          "codex_refresh_token": "Codex refresh token",
           "codex_account_id": "ChatGPT account ID"
         }
       }

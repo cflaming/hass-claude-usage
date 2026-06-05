@@ -55,9 +55,34 @@ The integration uses Anthropic's OAuth flow:
 
 - **Update interval** - How often to poll the usage API (default: 300 seconds, min: 60, max: 3600).
 - **Codex access token** - Optional OpenAI/Codex bearer token used to populate Codex sensors.
+- **Codex refresh token** - Optional OAuth refresh token used to renew stale Codex access tokens.
 - **ChatGPT account ID** - Optional account ID for Codex usage requests.
 
 Codex sensors are created with the integration but remain unavailable until a Codex access token is configured.
+When a refresh token is configured, the integration refreshes a bearer token shortly before its JWT expiry and retries
+once after an unauthorized usage response. Rotated access and refresh tokens are saved automatically.
+
+### Codex credentials
+
+On a machine where the Codex CLI is logged in, open `~/.codex/auth.json` (or
+`$CODEX_HOME/auth.json`). Copy these values from its `tokens` object into the integration options:
+
+```json
+{
+  "tokens": {
+    "access_token": "...",
+    "refresh_token": "...",
+    "account_id": "..."
+  }
+}
+```
+
+- `access_token` goes in **Codex access token**.
+- `refresh_token` goes in **Codex refresh token**.
+- `account_id` goes in **ChatGPT account ID**.
+
+The token fields are intentionally blank when reopening options. Leaving them blank preserves the stored values.
+Treat `auth.json`, access tokens, and refresh tokens as passwords. Do not share or commit them.
 
 ## Dashboard
 

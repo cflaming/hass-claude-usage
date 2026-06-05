@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -19,9 +22,14 @@ from .const import (
     API_BETA_HEADER,
     CONF_ACCESS_TOKEN,
     CONF_ACCOUNT_ID,
+    CONF_CODEX_ACCESS_TOKEN,
+    CONF_CODEX_ACCOUNT_ID,
+    CONF_CODEX_REFRESH_TOKEN,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_UPDATE_INTERVAL,
+    CODEX_OAUTH_CLIENT_ID,
+    CODEX_OAUTH_TOKEN_URL,
     CODEX_USAGE_API_URL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -168,7 +176,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ClaudeUsageConfigEntry)
 
 def _migrate_codex_options_to_data(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) -> None:
     """Move Codex credentials out of options if an earlier build stored them there."""
-    option_keys = {CONF_CODEX_ACCESS_TOKEN, CONF_CODEX_ACCOUNT_ID}
+    option_keys = {
+        CONF_CODEX_ACCESS_TOKEN,
+        CONF_CODEX_REFRESH_TOKEN,
+        CONF_CODEX_ACCOUNT_ID,
+    }
     if not option_keys.intersection(entry.options):
         return
 
@@ -227,7 +239,7 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_codex_usage(self) -> dict[str, Any]:
         """Fetch Codex usage data when a Codex token is configured."""
-        access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
+        access_token = await self._async_get_valid_codex_access_token()
         if not access_token:
             return {}
 
@@ -240,15 +252,16 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             headers["ChatGPT-Account-Id"] = account_id
 
         try:
-            session = aiohttp_client.async_get_clientsession(self.hass)
-            resp = await session.get(
-                CODEX_USAGE_API_URL,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=15),
-            )
+            resp = await self._async_request_codex_usage(headers)
             if resp.status == 401:
-                _LOGGER.warning("Codex usage authentication failed")
-                return {}
+                resp.release()
+                access_token = await self._async_refresh_codex_access_token()
+                if not access_token:
+                    _LOGGER.warning("Codex usage authentication failed")
+                    return {}
+                headers["Authorization"] = f"Bearer {access_token}"
+                resp = await self._async_request_codex_usage(headers)
+
             resp.raise_for_status()
             raw = await resp.json()
         except (aiohttp.ClientError, ValueError):
@@ -264,6 +277,76 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             _LOGGER.exception("Error parsing Codex usage data")
             return {}
+
+    async def _async_request_codex_usage(
+        self, headers: dict[str, str]
+    ) -> aiohttp.ClientResponse:
+        """Request Codex usage data."""
+        session = aiohttp_client.async_get_clientsession(self.hass)
+        return await session.get(
+            CODEX_USAGE_API_URL,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        )
+
+    async def _async_get_valid_codex_access_token(self) -> str | None:
+        """Return a usable Codex access token, refreshing it when stale."""
+        access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
+        if not access_token:
+            return None
+        if not _codex_access_token_is_stale(access_token):
+            return access_token
+        return await self._async_refresh_codex_access_token()
+
+    async def _async_refresh_codex_access_token(self) -> str | None:
+        """Refresh Codex OAuth credentials and persist token rotation."""
+        refresh_token = self.config_entry.data.get(CONF_CODEX_REFRESH_TOKEN)
+        if not refresh_token:
+            _LOGGER.warning("Codex access token is stale but no refresh token is configured")
+            return None
+
+        payload = {
+            "client_id": CODEX_OAUTH_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "scope": "openid profile email",
+        }
+
+        try:
+            session = aiohttp_client.async_get_clientsession(self.hass)
+            resp = await session.post(
+                CODEX_OAUTH_TOKEN_URL,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            )
+            if not resp.ok:
+                _LOGGER.warning("Codex token refresh failed (%s)", resp.status)
+                return None
+            token_data = await resp.json()
+        except (aiohttp.ClientError, ValueError):
+            _LOGGER.exception("Codex token refresh request failed")
+            return None
+
+        if not isinstance(token_data, dict):
+            _LOGGER.warning("Codex token refresh response was not a JSON object")
+            return None
+
+        access_token = token_data.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            _LOGGER.warning("Codex token refresh response missing access_token")
+            return None
+
+        rotated_refresh_token = token_data.get("refresh_token")
+        if not isinstance(rotated_refresh_token, str) or not rotated_refresh_token:
+            rotated_refresh_token = refresh_token
+
+        new_data = {
+            **self.config_entry.data,
+            CONF_CODEX_ACCESS_TOKEN: access_token,
+            CONF_CODEX_REFRESH_TOKEN: rotated_refresh_token,
+        }
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+        return access_token
 
     async def _ensure_valid_token(self) -> None:
         """Refresh the access token if expired."""
@@ -370,6 +453,23 @@ def _parse_usage(raw: dict[str, Any]) -> dict[str, Any]:
         data["extra_usage_enabled"] = False
 
     return data
+
+
+def _codex_access_token_is_stale(access_token: str, skew_seconds: int = 120) -> bool:
+    """Return whether a Codex JWT is expired or close to expiry."""
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return False
+
+    try:
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        expires_at = float(claims["exp"])
+    except (binascii.Error, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+    return expires_at <= time.time() + skew_seconds
 
 
 def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | None:

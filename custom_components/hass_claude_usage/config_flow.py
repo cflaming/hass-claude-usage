@@ -32,6 +32,7 @@ from .const import (
     CONF_ACCOUNT_NAME,
     CONF_CODEX_ACCESS_TOKEN,
     CONF_CODEX_ACCOUNT_ID,
+    CONF_CODEX_REFRESH_TOKEN,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_LEVEL,
@@ -325,11 +326,14 @@ class ClaudeUsageOptionsFlow(OptionsFlowWithReload):
         """Manage the options."""
         if user_input is not None:
             codex_access_token = user_input.get(CONF_CODEX_ACCESS_TOKEN, "").strip()
+            codex_refresh_token = user_input.get(CONF_CODEX_REFRESH_TOKEN, "").strip()
             codex_account_id = user_input.get(CONF_CODEX_ACCOUNT_ID, "").strip()
 
             data = dict(self.config_entry.data)
             if codex_access_token:
                 data[CONF_CODEX_ACCESS_TOKEN] = codex_access_token
+            if codex_refresh_token:
+                data[CONF_CODEX_REFRESH_TOKEN] = codex_refresh_token
 
             if codex_account_id:
                 data[CONF_CODEX_ACCOUNT_ID] = codex_account_id
@@ -357,6 +361,12 @@ class ClaudeUsageOptionsFlow(OptionsFlowWithReload):
                     ),
                     vol.Optional(
                         CONF_CODEX_ACCESS_TOKEN,
+                        default="",
+                    ): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
+                    vol.Optional(
+                        CONF_CODEX_REFRESH_TOKEN,
                         default="",
                     ): TextSelector(
                         TextSelectorConfig(type=TextSelectorType.PASSWORD)

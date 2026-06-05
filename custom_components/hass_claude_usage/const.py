@@ -14,6 +14,8 @@ USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
 PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile"
 API_BETA_HEADER = "oauth-2025-04-20"
 CODEX_USAGE_API_URL = "https://chatgpt.com/backend-api/wham/usage"
+CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 # Defaults
 DEFAULT_UPDATE_INTERVAL = 300  # seconds
@@ -28,6 +30,7 @@ CONF_ACCOUNT_NAME = "account_name"
 CONF_ACCOUNT_EMAIL = "account_email"
 CONF_SUBSCRIPTION_LEVEL = "subscription_level"
 CONF_CODEX_ACCESS_TOKEN = "codex_access_token"
+CONF_CODEX_REFRESH_TOKEN = "codex_refresh_token"
 CONF_CODEX_ACCOUNT_ID = "codex_account_id"
 
 # Sensor definitions: (key, name, unit, icon, device_class)
