@@ -24,7 +24,7 @@ views:
             secondary_info: last-updated
             name: 5h remaining
           - entity: sensor.claude_usage_codex_5h_reset
-            secondary_info: state
+            secondary_info: last-updated
             name: 5h reset
           - entity: sensor.claude_usage_codex_weekly_used
             secondary_info: last-updated
@@ -33,7 +33,7 @@ views:
             secondary_info: last-updated
             name: Weekly remaining
           - entity: sensor.claude_usage_codex_weekly_reset
-            secondary_info: state
+            secondary_info: last-updated
             name: Weekly reset
 
       - type: entities
