@@ -150,6 +150,7 @@ async def _refresh_token_for_migration(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) -> bool:
     """Set up Claude Usage from a config entry."""
+    _migrate_codex_options_to_data(hass, entry)
     coordinator = ClaudeUsageCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
@@ -171,6 +172,22 @@ async def _async_update_listener(hass: HomeAssistant, entry: ClaudeUsageConfigEn
     coordinator: ClaudeUsageCoordinator = entry.runtime_data
     interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
     coordinator.update_interval = timedelta(seconds=interval)
+
+
+def _migrate_codex_options_to_data(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) -> None:
+    """Move Codex credentials out of options if an earlier build stored them there."""
+    option_keys = {CONF_CODEX_ACCESS_TOKEN, CONF_CODEX_ACCOUNT_ID}
+    if not option_keys.intersection(entry.options):
+        return
+
+    data = dict(entry.data)
+    options = dict(entry.options)
+    for key in option_keys:
+        value = options.pop(key, None)
+        if value:
+            data[key] = value
+
+    hass.config_entries.async_update_entry(entry, data=data, options=options)
 
 
 class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -218,7 +235,7 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_codex_usage(self) -> dict[str, Any]:
         """Fetch Codex usage data when a Codex token is configured."""
-        access_token = self.config_entry.options.get(CONF_CODEX_ACCESS_TOKEN)
+        access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
         if not access_token:
             return {}
 
@@ -226,7 +243,7 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Authorization": f"Bearer {access_token}",
             "User-Agent": "hass-claude-usage",
         }
-        account_id = self.config_entry.options.get(CONF_CODEX_ACCOUNT_ID)
+        account_id = self.config_entry.data.get(CONF_CODEX_ACCOUNT_ID)
         if account_id:
             headers["ChatGPT-Account-Id"] = account_id
 
@@ -242,11 +259,19 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return {}
             resp.raise_for_status()
             raw = await resp.json()
-        except aiohttp.ClientError:
+        except (aiohttp.ClientError, ValueError):
             _LOGGER.exception("Error fetching Codex usage data")
             return {}
 
-        return _parse_codex_usage(raw)
+        if not isinstance(raw, dict):
+            _LOGGER.warning("Codex usage response was not a JSON object")
+            return {}
+
+        try:
+            return _parse_codex_usage(raw)
+        except (TypeError, ValueError):
+            _LOGGER.exception("Error parsing Codex usage data")
+            return {}
 
     async def _ensure_valid_token(self) -> None:
         """Refresh the access token if expired."""
@@ -357,7 +382,7 @@ def _parse_usage(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | None:
     """Normalize one Codex usage window."""
-    if not window:
+    if not isinstance(window, dict):
         return None
 
     used_percent = window.get("used_percent", 0)
@@ -366,21 +391,10 @@ def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | N
     except (TypeError, ValueError):
         used_percent = 0
 
-    window_seconds = window.get("limit_window_seconds", 0)
-    window_minutes = window.get("window_minutes")
-    if window_minutes is None:
-        try:
-            window_seconds = float(window_seconds)
-            window_minutes = int((window_seconds + 59) // 60) if window_seconds > 0 else None
-        except (TypeError, ValueError):
-            window_minutes = None
-
     return {
         "used_percent": used_percent,
         "remaining_percent": max(0, 100 - used_percent),
-        "window_minutes": window_minutes,
         "reset_at": window.get("reset_at"),
-        "reset_after_seconds": window.get("reset_after_seconds"),
     }
 
 
@@ -395,7 +409,7 @@ def _format_codex_reset_time(epoch_seconds: Any, include_date: bool) -> str | No
         return None
 
     try:
-        reset = datetime.fromtimestamp(float(epoch_seconds))
+        reset = datetime.fromtimestamp(float(epoch_seconds), tz=UTC)
     except (TypeError, ValueError, OSError):
         return None
 
@@ -413,7 +427,10 @@ def _normalize_codex_limit_status(status: Any) -> str:
 
 def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
     """Parse raw Codex API response into flat sensor data dict."""
+    data: dict[str, Any] = {}
     rate_limit = raw.get("rate_limit") or raw.get("rateLimits") or {}
+    if not isinstance(rate_limit, dict):
+        rate_limit = {}
     primary = _normalize_codex_window(
         _first_some(rate_limit.get("primary_window"), rate_limit.get("primary"))
     )
@@ -421,22 +438,37 @@ def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
         _first_some(rate_limit.get("secondary_window"), rate_limit.get("secondary"))
     )
     credits = raw.get("credits") or {}
+    if not isinstance(credits, dict):
+        credits = {}
     rate_limit_reached_type = raw.get("rate_limit_reached_type")
     if isinstance(rate_limit_reached_type, dict):
         rate_limit_reached_type = rate_limit_reached_type.get("kind")
 
-    return {
-        "plan": raw.get("plan_type") or raw.get("planType"),
-        "primary_used_percent": primary.get("used_percent") if primary else None,
-        "primary_remaining_percent": primary.get("remaining_percent") if primary else None,
-        "primary_reset_time": _format_codex_reset_time(
-            primary.get("reset_at") if primary else None, False
-        ),
-        "secondary_used_percent": secondary.get("used_percent") if secondary else None,
-        "secondary_remaining_percent": secondary.get("remaining_percent") if secondary else None,
-        "secondary_reset_time": _format_codex_reset_time(
-            secondary.get("reset_at") if secondary else None, True
-        ),
-        "credits_balance": credits.get("balance"),
-        "rate_limit_reached_type": _normalize_codex_limit_status(rate_limit_reached_type),
-    }
+    plan = raw.get("plan_type") or raw.get("planType")
+    if plan is not None:
+        data["plan"] = plan
+
+    if primary:
+        data["primary_used_percent"] = primary["used_percent"]
+        data["primary_remaining_percent"] = primary["remaining_percent"]
+        reset_time = _format_codex_reset_time(primary.get("reset_at"), False)
+        if reset_time is not None:
+            data["primary_reset_time"] = reset_time
+
+    if secondary:
+        data["secondary_used_percent"] = secondary["used_percent"]
+        data["secondary_remaining_percent"] = secondary["remaining_percent"]
+        reset_time = _format_codex_reset_time(secondary.get("reset_at"), True)
+        if reset_time is not None:
+            data["secondary_reset_time"] = reset_time
+
+    credits_balance = credits.get("balance")
+    if credits_balance is not None:
+        data["credits_balance"] = credits_balance
+
+    if rate_limit_reached_type is not None:
+        data["rate_limit_reached_type"] = _normalize_codex_limit_status(
+            rate_limit_reached_type
+        )
+
+    return data

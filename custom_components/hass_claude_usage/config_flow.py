@@ -21,6 +21,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
 from .const import (
     API_BETA_HEADER,
@@ -322,13 +323,32 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            codex_access_token = user_input.get(CONF_CODEX_ACCESS_TOKEN, "").strip()
+            codex_account_id = user_input.get(CONF_CODEX_ACCOUNT_ID, "").strip()
+
+            data = dict(self.config_entry.data)
+            if codex_access_token:
+                data[CONF_CODEX_ACCESS_TOKEN] = codex_access_token
+            else:
+                data.pop(CONF_CODEX_ACCESS_TOKEN, None)
+
+            if codex_account_id:
+                data[CONF_CODEX_ACCOUNT_ID] = codex_account_id
+            else:
+                data.pop(CONF_CODEX_ACCOUNT_ID, None)
+
+            self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+            return self.async_create_entry(
+                data={
+                    CONF_UPDATE_INTERVAL: user_input[CONF_UPDATE_INTERVAL],
+                }
+            )
 
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
         )
-        codex_access_token = self.config_entry.options.get(CONF_CODEX_ACCESS_TOKEN, "")
-        codex_account_id = self.config_entry.options.get(CONF_CODEX_ACCOUNT_ID, "")
+        codex_access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN, "")
+        codex_account_id = self.config_entry.data.get(CONF_CODEX_ACCOUNT_ID, "")
 
         return self.async_show_form(
             step_id="init",
@@ -340,7 +360,9 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_CODEX_ACCESS_TOKEN,
                         default=codex_access_token,
-                    ): str,
+                    ): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
                     vol.Optional(CONF_CODEX_ACCOUNT_ID, default=codex_account_id): str,
                 }
             ),
