@@ -239,7 +239,9 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_codex_usage(self) -> dict[str, Any]:
         """Fetch Codex usage data when a Codex token is configured."""
-        access_token = await self._async_get_valid_codex_access_token()
+        access_token, refreshed_before_request = (
+            await self._async_get_valid_codex_access_token()
+        )
         if not access_token:
             return {}
 
@@ -255,6 +257,9 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             resp = await self._async_request_codex_usage(headers)
             if resp.status == 401:
                 resp.release()
+                if refreshed_before_request:
+                    _LOGGER.warning("Codex usage rejected a freshly refreshed access token")
+                    return {}
                 access_token = await self._async_refresh_codex_access_token()
                 if not access_token:
                     _LOGGER.warning("Codex usage authentication failed")
@@ -289,14 +294,14 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             timeout=aiohttp.ClientTimeout(total=15),
         )
 
-    async def _async_get_valid_codex_access_token(self) -> str | None:
-        """Return a usable Codex access token, refreshing it when stale."""
+    async def _async_get_valid_codex_access_token(self) -> tuple[str | None, bool]:
+        """Return a usable Codex access token and whether it was refreshed."""
         access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
         if not access_token:
-            return None
+            return None, False
         if not _codex_access_token_is_stale(access_token):
-            return access_token
-        return await self._async_refresh_codex_access_token()
+            return access_token, False
+        return await self._async_refresh_codex_access_token(), True
 
     async def _async_refresh_codex_access_token(self) -> str | None:
         """Refresh Codex OAuth credentials and persist token rotation."""
