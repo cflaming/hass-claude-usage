@@ -18,6 +18,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client
@@ -317,7 +318,7 @@ class ClaudeUsageConfigFlow(ConfigFlow, domain=DOMAIN):
         return ClaudeUsageOptionsFlow()
 
 
-class ClaudeUsageOptionsFlow(OptionsFlow):
+class ClaudeUsageOptionsFlow(OptionsFlowWithReload):
     """Handle options for Claude Usage."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

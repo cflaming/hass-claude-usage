@@ -155,7 +155,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) 
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
 
@@ -165,13 +164,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ClaudeUsageConfigEntry)
     if unload_ok:
         await entry.runtime_data.async_shutdown()
     return unload_ok
-
-
-async def _async_update_listener(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) -> None:
-    """Handle options update."""
-    coordinator: ClaudeUsageCoordinator = entry.runtime_data
-    interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-    coordinator.update_interval = timedelta(seconds=interval)
 
 
 def _migrate_codex_options_to_data(hass: HomeAssistant, entry: ClaudeUsageConfigEntry) -> None:
