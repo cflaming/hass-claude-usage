@@ -501,19 +501,14 @@ def _first_some(*values: Any) -> Any:
     return next((value for value in values if value is not None), None)
 
 
-def _format_codex_reset_time(epoch_seconds: Any, include_date: bool) -> str | None:
-    """Format Codex reset time like the MQTT bridge sensors."""
+def _epoch_to_iso(epoch_seconds: Any) -> str | None:
+    """Convert a Unix epoch value to a UTC ISO 8601 string for timestamp sensors."""
     if epoch_seconds is None:
         return None
-
     try:
-        reset = datetime.fromtimestamp(float(epoch_seconds), tz=UTC)
+        return datetime.fromtimestamp(float(epoch_seconds), tz=UTC).isoformat()
     except (TypeError, ValueError, OSError):
         return None
-
-    if include_date:
-        return reset.strftime("%d/%m - %H:%M")
-    return reset.strftime("%H:%M")
 
 
 def _normalize_codex_limit_status(status: Any) -> str:
@@ -550,7 +545,7 @@ def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
         if "used_percent" in primary:
             data["primary_used_percent"] = primary["used_percent"]
             data["primary_remaining_percent"] = primary["remaining_percent"]
-        reset_time = _format_codex_reset_time(primary.get("reset_at"), False)
+        reset_time = _epoch_to_iso(primary.get("reset_at"))
         if reset_time is not None:
             data["primary_reset_time"] = reset_time
 
@@ -558,7 +553,7 @@ def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
         if "used_percent" in secondary:
             data["secondary_used_percent"] = secondary["used_percent"]
             data["secondary_remaining_percent"] = secondary["remaining_percent"]
-        reset_time = _format_codex_reset_time(secondary.get("reset_at"), True)
+        reset_time = _epoch_to_iso(secondary.get("reset_at"))
         if reset_time is not None:
             data["secondary_reset_time"] = reset_time
 

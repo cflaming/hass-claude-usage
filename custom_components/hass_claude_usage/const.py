@@ -83,7 +83,7 @@ CLAUDE_SENSOR_DEFINITIONS = [
 CODEX_SENSOR_DEFINITIONS = [
     ("primary_used_percent", "Codex 5h Used", "%", "mdi:timer-sand", None),
     ("primary_remaining_percent", "Codex 5h Remaining", "%", "mdi:timer-outline", None),
-    ("primary_reset_time", "Codex 5h Reset", None, "mdi:clock-outline", None),
+    ("primary_reset_time", "Codex 5h Reset", None, "mdi:clock-outline", "timestamp"),
     ("secondary_used_percent", "Codex Weekly Used", "%", "mdi:calendar-week", None),
     (
         "secondary_remaining_percent",
@@ -92,7 +92,7 @@ CODEX_SENSOR_DEFINITIONS = [
         "mdi:calendar-check",
         None,
     ),
-    ("secondary_reset_time", "Codex Weekly Reset", None, "mdi:calendar-clock", None),
+    ("secondary_reset_time", "Codex Weekly Reset", None, "mdi:calendar-clock", "timestamp"),
     ("credits_balance", "Codex Credits", "credits", "mdi:cash", None),
     ("plan", "Codex Plan", None, "mdi:account-badge", None),
     ("rate_limit_reached_type", "Codex Limit Status", None, "mdi:alert-circle", None),
