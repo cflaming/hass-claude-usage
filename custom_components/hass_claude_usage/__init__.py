@@ -184,7 +184,7 @@ def _migrate_codex_options_to_data(hass: HomeAssistant, entry: ClaudeUsageConfig
     options = dict(entry.options)
     for key in option_keys:
         value = options.pop(key, None)
-        if value:
+        if value is not None:
             data[key] = value
 
     hass.config_entries.async_update_entry(entry, data=data, options=options)
@@ -385,17 +385,18 @@ def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | N
     if not isinstance(window, dict):
         return None
 
-    used_percent = window.get("used_percent", 0)
-    try:
-        used_percent = float(used_percent)
-    except (TypeError, ValueError):
-        used_percent = 0
+    used_percent = window.get("used_percent")
+    if used_percent is not None:
+        try:
+            used_percent = float(used_percent)
+        except (TypeError, ValueError):
+            used_percent = None
 
-    return {
-        "used_percent": used_percent,
-        "remaining_percent": max(0, 100 - used_percent),
-        "reset_at": window.get("reset_at"),
-    }
+    data: dict[str, Any] = {"reset_at": window.get("reset_at")}
+    if used_percent is not None:
+        data["used_percent"] = used_percent
+        data["remaining_percent"] = max(0, 100 - used_percent)
+    return data
 
 
 def _first_some(*values: Any) -> Any:
@@ -405,7 +406,7 @@ def _first_some(*values: Any) -> Any:
 
 def _format_codex_reset_time(epoch_seconds: Any, include_date: bool) -> str | None:
     """Format Codex reset time like the MQTT bridge sensors."""
-    if not epoch_seconds:
+    if epoch_seconds is None:
         return None
 
     try:
@@ -449,15 +450,17 @@ def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
         data["plan"] = plan
 
     if primary:
-        data["primary_used_percent"] = primary["used_percent"]
-        data["primary_remaining_percent"] = primary["remaining_percent"]
+        if "used_percent" in primary:
+            data["primary_used_percent"] = primary["used_percent"]
+            data["primary_remaining_percent"] = primary["remaining_percent"]
         reset_time = _format_codex_reset_time(primary.get("reset_at"), False)
         if reset_time is not None:
             data["primary_reset_time"] = reset_time
 
     if secondary:
-        data["secondary_used_percent"] = secondary["used_percent"]
-        data["secondary_remaining_percent"] = secondary["remaining_percent"]
+        if "used_percent" in secondary:
+            data["secondary_used_percent"] = secondary["used_percent"]
+            data["secondary_remaining_percent"] = secondary["remaining_percent"]
         reset_time = _format_codex_reset_time(secondary.get("reset_at"), True)
         if reset_time is not None:
             data["secondary_reset_time"] = reset_time
@@ -466,9 +469,8 @@ def _parse_codex_usage(raw: dict[str, Any]) -> dict[str, Any]:
     if credits_balance is not None:
         data["credits_balance"] = credits_balance
 
-    if rate_limit_reached_type is not None:
-        data["rate_limit_reached_type"] = _normalize_codex_limit_status(
-            rate_limit_reached_type
-        )
+    data["rate_limit_reached_type"] = _normalize_codex_limit_status(
+        rate_limit_reached_type
+    )
 
     return data

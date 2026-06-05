@@ -329,8 +329,6 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
             data = dict(self.config_entry.data)
             if codex_access_token:
                 data[CONF_CODEX_ACCESS_TOKEN] = codex_access_token
-            else:
-                data.pop(CONF_CODEX_ACCESS_TOKEN, None)
 
             if codex_account_id:
                 data[CONF_CODEX_ACCOUNT_ID] = codex_account_id
@@ -347,7 +345,6 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
         )
-        codex_access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN, "")
         codex_account_id = self.config_entry.data.get(CONF_CODEX_ACCOUNT_ID, "")
 
         return self.async_show_form(
@@ -359,7 +356,7 @@ class ClaudeUsageOptionsFlow(OptionsFlow):
                     ),
                     vol.Optional(
                         CONF_CODEX_ACCESS_TOKEN,
-                        default=codex_access_token,
+                        default="",
                     ): TextSelector(
                         TextSelectorConfig(type=TextSelectorType.PASSWORD)
                     ),
