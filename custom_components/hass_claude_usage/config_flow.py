@@ -325,8 +325,12 @@ class ClaudeUsageOptionsFlow(OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            codex_access_token = user_input.get(CONF_CODEX_ACCESS_TOKEN, "").strip()
-            codex_refresh_token = user_input.get(CONF_CODEX_REFRESH_TOKEN, "").strip()
+            codex_access_token = _normalize_pasted_token(
+                user_input.get(CONF_CODEX_ACCESS_TOKEN, "")
+            )
+            codex_refresh_token = _normalize_pasted_token(
+                user_input.get(CONF_CODEX_REFRESH_TOKEN, "")
+            )
             codex_account_id = user_input.get(CONF_CODEX_ACCOUNT_ID, "").strip()
 
             data = dict(self.config_entry.data)
@@ -383,3 +387,13 @@ def generate_pkce() -> tuple[str, str]:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
+
+
+def _normalize_pasted_token(value: str) -> str:
+    """Normalize token values copied from JSON or Authorization headers."""
+    token = value.strip().rstrip(",")
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        token = token[1:-1].strip()
+    return "".join(token.split())

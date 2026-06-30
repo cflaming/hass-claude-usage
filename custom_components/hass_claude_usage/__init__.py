@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -30,7 +31,9 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CODEX_OAUTH_CLIENT_ID,
     CODEX_OAUTH_TOKEN_URL,
+    CODEX_ORIGINATOR,
     CODEX_USAGE_API_URL,
+    CODEX_USER_AGENT,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     OAUTH_CLIENT_ID,
@@ -239,7 +242,7 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_codex_usage(self) -> dict[str, Any]:
         """Fetch Codex usage data when a Codex token is configured."""
-        access_token, refreshed_before_request = (
+        access_token, refresh_attempted_before_request = (
             await self._async_get_valid_codex_access_token()
         )
         if not access_token:
@@ -247,18 +250,27 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "User-Agent": "hass-claude-usage",
+            "Content-Type": "application/json",
+            "OAI-Product-Sku": "codex",
+            "originator": CODEX_ORIGINATOR,
+            "User-Agent": CODEX_USER_AGENT,
         }
-        account_id = self.config_entry.data.get(CONF_CODEX_ACCOUNT_ID)
+        account_id = self.config_entry.data.get(
+            CONF_CODEX_ACCOUNT_ID
+        ) or _codex_account_id_from_access_token(access_token)
         if account_id:
-            headers["ChatGPT-Account-Id"] = account_id
+            headers["ChatGPT-Account-ID"] = account_id
 
         try:
             resp = await self._async_request_codex_usage(headers)
             if resp.status == 401:
-                resp.release()
-                if refreshed_before_request:
-                    _LOGGER.warning("Codex usage rejected a freshly refreshed access token")
+                body = await resp.text()
+                _LOGGER.warning(
+                    "Codex usage authentication failed (401): %s",
+                    _redact_log_text(body),
+                )
+                if refresh_attempted_before_request:
+                    _LOGGER.warning("Codex usage rejected access token after refresh attempt")
                     return {}
                 access_token = await self._async_refresh_codex_access_token()
                 if not access_token:
@@ -296,16 +308,25 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_get_valid_codex_access_token(self) -> tuple[str | None, bool]:
         """Return a usable Codex access token and whether it was refreshed."""
-        access_token = self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
+        access_token = _normalize_token_value(
+            self.config_entry.data.get(CONF_CODEX_ACCESS_TOKEN)
+        )
         if not access_token:
             return None, False
         if not _codex_access_token_is_stale(access_token):
             return access_token, False
-        return await self._async_refresh_codex_access_token(), True
+        refreshed_token = await self._async_refresh_codex_access_token()
+        if refreshed_token:
+            return refreshed_token, True
+
+        _LOGGER.warning("Using configured Codex access token after refresh failed")
+        return access_token, True
 
     async def _async_refresh_codex_access_token(self) -> str | None:
         """Refresh Codex OAuth credentials and persist token rotation."""
-        refresh_token = self.config_entry.data.get(CONF_CODEX_REFRESH_TOKEN)
+        refresh_token = _normalize_token_value(
+            self.config_entry.data.get(CONF_CODEX_REFRESH_TOKEN)
+        )
         if not refresh_token:
             _LOGGER.warning("Codex access token is stale but no refresh token is configured")
             return None
@@ -314,7 +335,6 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "client_id": CODEX_OAUTH_CLIENT_ID,
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "scope": "openid profile email",
         }
 
         try:
@@ -322,10 +342,21 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             resp = await session.post(
                 CODEX_OAUTH_TOKEN_URL,
                 json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "originator": CODEX_ORIGINATOR,
+                    "User-Agent": CODEX_USER_AGENT,
+                },
                 timeout=aiohttp.ClientTimeout(total=30),
             )
             if not resp.ok:
-                _LOGGER.warning("Codex token refresh failed (%s)", resp.status)
+                body = await resp.text()
+                _LOGGER.warning(
+                    "Codex token refresh failed (%s, refresh token %s): %s",
+                    resp.status,
+                    _describe_token_shape(refresh_token),
+                    _redact_log_text(body),
+                )
                 return None
             token_data = await resp.json()
         except (aiohttp.ClientError, ValueError):
@@ -462,19 +493,77 @@ def _parse_usage(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _codex_access_token_is_stale(access_token: str, skew_seconds: int = 120) -> bool:
     """Return whether a Codex JWT is expired or close to expiry."""
+    claims = _codex_access_token_claims(access_token)
+    if not claims:
+        return False
+
+    try:
+        expires_at = float(claims["exp"])
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    return expires_at <= time.time() + skew_seconds
+
+
+def _codex_access_token_claims(access_token: str) -> dict[str, Any] | None:
+    """Decode unverified Codex access-token claims."""
     parts = access_token.split(".")
     if len(parts) < 2:
-        return False
+        return None
 
     try:
         payload = parts[1]
         payload += "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-        expires_at = float(claims["exp"])
-    except (binascii.Error, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return False
+    except (binascii.Error, TypeError, ValueError, json.JSONDecodeError):
+        return None
 
-    return expires_at <= time.time() + skew_seconds
+    return claims if isinstance(claims, dict) else None
+
+
+def _codex_account_id_from_access_token(access_token: str) -> str | None:
+    """Return the ChatGPT account id embedded in a Codex access token."""
+    claims = _codex_access_token_claims(access_token)
+    auth_claims = claims.get("https://api.openai.com/auth") if claims else None
+    if not isinstance(auth_claims, dict):
+        return None
+    account_id = auth_claims.get("chatgpt_account_id")
+    return account_id if isinstance(account_id, str) and account_id else None
+
+
+def _redact_log_text(text: str) -> str:
+    """Redact token-like values before logging an auth error body."""
+    redacted = re.sub(
+        r'("(?:access_token|refresh_token|id_token)"\s*:\s*")[^"]+(")',
+        r"\1<redacted>\2",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return redacted[:500]
+
+
+def _normalize_token_value(value: Any) -> str:
+    """Normalize token values copied from JSON or Authorization headers."""
+    if not isinstance(value, str):
+        return ""
+    token = value.strip().rstrip(",")
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        token = token[1:-1].strip()
+    return "".join(token.split())
+
+
+def _describe_token_shape(token: str) -> str:
+    """Return non-secret token shape details for auth diagnostics."""
+    if not token:
+        return "empty"
+    segments = token.split(".")
+    prefix = segments[0] if len(segments) > 1 else ""
+    return (
+        f"len={len(token)}, prefix={prefix or '<none>'}, "
+        f"segments={len(segments)}, whitespace={any(char.isspace() for char in token)}"
+    )
 
 
 def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | None:

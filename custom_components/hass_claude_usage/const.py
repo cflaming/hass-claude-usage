@@ -16,6 +16,8 @@ API_BETA_HEADER = "oauth-2025-04-20"
 CODEX_USAGE_API_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+CODEX_ORIGINATOR = "codex_cli_rs"
+CODEX_USER_AGENT = "codex_cli_rs/0.142.4 (hass-claude-usage)"
 
 # Defaults
 DEFAULT_UPDATE_INTERVAL = 300  # seconds
