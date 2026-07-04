@@ -213,6 +213,9 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             config_entry=entry,
             always_update=False,
         )
+        # Set to True when Codex auth fails with a permanent error code (e.g. token_revoked,
+        # refresh_token_invalidated). Suppresses further retries until the integration reloads.
+        self._codex_auth_permanently_failed: bool = False
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch usage data from the API."""
@@ -242,10 +245,12 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_fetch_codex_usage(self) -> dict[str, Any]:
         """Fetch Codex usage data when a Codex token is configured."""
+        if self._codex_auth_permanently_failed:
+            return {}
         access_token, refresh_attempted_before_request = (
             await self._async_get_valid_codex_access_token()
         )
-        if not access_token:
+        if not access_token or self._codex_auth_permanently_failed:
             return {}
 
         headers = {
@@ -269,6 +274,15 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Codex usage authentication failed (401): %s",
                     _redact_log_text(body),
                 )
+                if perm_code := _codex_permanent_error_code(body):
+                    self._codex_auth_permanently_failed = True
+                    _LOGGER.error(
+                        "Codex authentication permanently invalidated (%s). "
+                        "Run `codex` to re-authenticate, then update the token "
+                        "in the integration options and reload the integration.",
+                        perm_code,
+                    )
+                    return {}
                 if refresh_attempted_before_request:
                     _LOGGER.warning("Codex usage rejected access token after refresh attempt")
                     return {}
@@ -357,6 +371,14 @@ class ClaudeUsageCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _describe_token_shape(refresh_token),
                     _redact_log_text(body),
                 )
+                if perm_code := _codex_permanent_error_code(body):
+                    self._codex_auth_permanently_failed = True
+                    _LOGGER.error(
+                        "Codex refresh token permanently invalidated (%s). "
+                        "Run `codex` to re-authenticate, then update the token "
+                        "in the integration options and reload the integration.",
+                        perm_code,
+                    )
                 return None
             token_data = await resp.json()
         except (aiohttp.ClientError, ValueError):
@@ -564,6 +586,28 @@ def _describe_token_shape(token: str) -> str:
         f"len={len(token)}, prefix={prefix or '<none>'}, "
         f"segments={len(segments)}, whitespace={any(char.isspace() for char in token)}"
     )
+
+
+_CODEX_PERMANENT_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "token_revoked",
+        "token_invalidated",
+        "refresh_token_invalidated",
+        "session_expired",
+    }
+)
+
+
+def _codex_permanent_error_code(body: str) -> str | None:
+    """Return the error code if the body indicates a permanent Codex auth failure."""
+    try:
+        data = json.loads(body)
+        code = (data.get("error") or {}).get("code")
+        if isinstance(code, str) and code in _CODEX_PERMANENT_ERROR_CODES:
+            return code
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return None
 
 
 def _normalize_codex_window(window: dict[str, Any] | None) -> dict[str, Any] | None:
